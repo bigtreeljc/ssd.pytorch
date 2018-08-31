@@ -7,7 +7,7 @@ from imutils.video import FPS, WebcamVideoStream
 import argparse
 
 parser = argparse.ArgumentParser(description='Single Shot MultiBox Detection')
-parser.add_argument('--weights', default='weights/ssd_300_VOC0712.pth',
+parser.add_argument('--weights', default='weights/ssd300_COCO_95000.pth',
                     type=str, help='Trained state_dict file path')
 parser.add_argument('--cuda', default=False, type=bool,
                     help='Use cuda in live demo')
@@ -34,7 +34,7 @@ def cv2_demo(net, transform):
                               (int(pt[0]), int(pt[1])),
                               (int(pt[2]), int(pt[3])),
                               COLORS[i % 3], 2)
-                cv2.putText(frame, labelmap[i - 1], (int(pt[0]), int(pt[1])),
+                cv2.putText(frame, WIDER_CLASSES[i - 1], (int(pt[0]), int(pt[1])),
                             FONT, 2, (255, 255, 255), 2, cv2.LINE_AA)
                 j += 1
         return frame
@@ -72,9 +72,10 @@ if __name__ == '__main__':
     sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
 
     from data import BaseTransform, VOC_CLASSES as labelmap
+    from data import WIDER_CLASSES
     from ssd import build_ssd
 
-    net = build_ssd('test', 300, 21)    # initialize SSD
+    net = build_ssd('test', 300, 2)    # initialize SSD
     net.load_state_dict(torch.load(args.weights))
     transform = BaseTransform(net.size, (104/256.0, 117/256.0, 123/256.0))
 

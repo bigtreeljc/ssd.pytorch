@@ -1,5 +1,7 @@
+import math
+import pdb
 from data import *
-from utils.augmentations import SSDAugmentation
+from utils.augmentations import SSDAugmentation, SSDWiderAugmentation
 from layers.modules import MultiBoxLoss
 from ssd import build_ssd
 import os
@@ -23,25 +25,26 @@ def str2bool(v):
 parser = argparse.ArgumentParser(
     description='Single Shot MultiBox Detector Training With Pytorch')
 train_set = parser.add_mutually_exclusive_group()
-parser.add_argument('--dataset', default='VOC', choices=['VOC', 'COCO'],
-                    type=str, help='VOC or COCO')
-parser.add_argument('--dataset_root', default=VOC_ROOT,
+parser.add_argument('--dataset', default='WIDER', choices=['VOC', 'COCO', 'WIDER'],
+                    type=str, help='VOC or COCO or WIDER')
+parser.add_argument('--dataset_root', default=WIDER_ROOT,
                     help='Dataset root directory path')
 parser.add_argument('--basenet', default='vgg16_reducedfc.pth',
                     help='Pretrained base model')
-parser.add_argument('--batch_size', default=32, type=int,
+parser.add_argument('--batch_size', default=16, type=int,
                     help='Batch size for training')
-parser.add_argument('--resume', default=None, type=str,
-                    help='Checkpoint state_dict file to resume training from')
-parser.add_argument('--start_iter', default=0, type=int,
+parser.add_argument('--resume', default="weights/ssd300_COCO_70000.pth", 
+    type=str, help='Checkpoint state_dict file to"\
+    " resume training from')
+parser.add_argument('--start_iter', default=70000, type=int,
                     help='Resume training at this iter')
 parser.add_argument('--num_workers', default=4, type=int,
                     help='Number of workers used in dataloading')
 parser.add_argument('--cuda', default=True, type=str2bool,
                     help='Use CUDA to train model')
-parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float,
+parser.add_argument('--lr', '--learning-rate', default=1e-4, type=float,
                     help='initial learning rate')
-parser.add_argument('--momentum', default=0.9, type=float,
+parser.add_argument('--momentum', default=0.5, type=float,
                     help='Momentum value for optim')
 parser.add_argument('--weight_decay', default=5e-4, type=float,
                     help='Weight decay for SGD')
@@ -52,7 +55,6 @@ parser.add_argument('--visdom', default=False, type=str2bool,
 parser.add_argument('--save_folder', default='weights/',
                     help='Directory for saving checkpoint models')
 args = parser.parse_args()
-
 
 if torch.cuda.is_available():
     if args.cuda:
@@ -66,7 +68,7 @@ else:
 
 if not os.path.exists(args.save_folder):
     os.mkdir(args.save_folder)
-
+COCO_ROOT="data/coco"
 
 def train():
     if args.dataset == 'COCO':
@@ -85,8 +87,16 @@ def train():
             parser.error('Must specify dataset if specifying dataset_root')
         cfg = voc
         dataset = VOCDetection(root=args.dataset_root,
-                               transform=SSDAugmentation(cfg['min_dim'],
-                                                         MEANS))
+            image_sets=[('2007', 'trainval')],
+            transform=SSDAugmentation(cfg['min_dim'],
+            MEANS))
+    elif args.dataset == 'WIDER':
+        print("training on wider face")
+        cfg = wider
+        dataset = WiderDetection(
+            root=args.dataset_root,
+            transform=SSDWiderAugmentation(cfg['min_dim'], MEANS)
+        )
 
     if args.visdom:
         import visdom
@@ -130,6 +140,7 @@ def train():
     print('Loading the dataset...')
 
     epoch_size = len(dataset) // args.batch_size
+    print("epoch_size {}".format(epoch_size))
     print('Training SSD on:', dataset.name)
     print('Using the specified args:')
     print(args)
@@ -143,9 +154,8 @@ def train():
         epoch_plot = create_vis_plot('Epoch', 'Loss', vis_title, vis_legend)
 
     data_loader = data.DataLoader(dataset, args.batch_size,
-                                  num_workers=args.num_workers,
-                                  shuffle=True, collate_fn=detection_collate,
-                                  pin_memory=True)
+        num_workers=args.num_workers, shuffle=True, 
+        collate_fn=detection_collate, pin_memory=True)
     # create batch iterator
     batch_iterator = iter(data_loader)
     for iteration in range(args.start_iter, cfg['max_iter']):
@@ -156,6 +166,11 @@ def train():
             loc_loss = 0
             conf_loss = 0
             epoch += 1
+        elif not args.visdom and iteration != 0 and (iteration % epoch_size == 0):
+            batch_iterator = iter(data_loader)
+            epoch += 1
+            loc_loss = 0
+            conf_loss = 0
 
         if iteration in cfg['lr_steps']:
             step_index += 1
@@ -174,8 +189,11 @@ def train():
         t0 = time.time()
         out = net(images)
         # backprop
-        optimizer.zero_grad()
         loss_l, loss_c = criterion(out, targets)
+        if math.isinf(loss_l.data[0]) or math.isnan(loss_l.data[0]) or \
+                math.isinf(loss_c.data[0]) or math.isnan(loss_c.data[0]):
+            continue
+        optimizer.zero_grad()
         loss = loss_l + loss_c
         loss.backward()
         optimizer.step()
@@ -185,7 +203,10 @@ def train():
 
         if iteration % 10 == 0:
             print('timer: %.4f sec.' % (t1 - t0))
-            print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (loss.data[0]), end=' ')
+            # print('iter ' + repr(iteration) + ' || Loss: %.4f ||' % (loss.data[0]), end=' ')
+            print("iter {} Loss {} loc loss {} conf loss {}".\
+                format(iteration, loss.data[0], loss_l.data[0],
+                    loss_c.data[0]))
 
         if args.visdom:
             update_vis_plot(iteration, loss_l.data[0], loss_c.data[0],
@@ -212,7 +233,6 @@ def adjust_learning_rate(optimizer, gamma, step):
 
 def xavier(param):
     init.xavier_uniform(param)
-
 
 def weights_init(m):
     if isinstance(m, nn.Conv2d):

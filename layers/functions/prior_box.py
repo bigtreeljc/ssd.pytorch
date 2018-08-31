@@ -3,7 +3,6 @@ from math import sqrt as sqrt
 from itertools import product as product
 import torch
 
-
 class PriorBox(object):
     """Compute priorbox coordinates in center-offset form for each source
     feature map.
@@ -52,4 +51,6 @@ class PriorBox(object):
         output = torch.Tensor(mean).view(-1, 4)
         if self.clip:
             output.clamp_(max=1, min=0)
+        # print("priors shape {}".format(output.shape))
+        # print("priors {}".format(output))
         return output

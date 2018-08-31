@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+import math
+import pdb
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -30,9 +33,9 @@ class MultiBoxLoss(nn.Module):
         See: https://arxiv.org/pdf/1512.02325.pdf for more details.
     """
 
-    def __init__(self, num_classes, overlap_thresh, prior_for_matching,
-                 bkg_label, neg_mining, neg_pos, neg_overlap, encode_target,
-                 use_gpu=True):
+    def __init__(self, num_classes, overlap_thresh, 
+        prior_for_matching, bkg_label, neg_mining, neg_pos, 
+        neg_overlap, encode_target, use_gpu=True):
         super(MultiBoxLoss, self).__init__()
         self.use_gpu = use_gpu
         self.num_classes = num_classes
@@ -70,8 +73,8 @@ class MultiBoxLoss(nn.Module):
             truths = targets[idx][:, :-1].data
             labels = targets[idx][:, -1].data
             defaults = priors.data
-            match(self.threshold, truths, defaults, self.variance, labels,
-                  loc_t, conf_t, idx)
+            match(self.threshold, truths, defaults, 
+                self.variance, labels, loc_t, conf_t, idx)
         if self.use_gpu:
             loc_t = loc_t.cuda()
             conf_t = conf_t.cuda()
@@ -81,17 +84,31 @@ class MultiBoxLoss(nn.Module):
 
         pos = conf_t > 0
         num_pos = pos.sum(dim=1, keepdim=True)
+        # print("num_pos {}".format(num_pos.shape))
 
         # Localization Loss (Smooth L1)
         # Shape: [batch,num_priors,4]
         pos_idx = pos.unsqueeze(pos.dim()).expand_as(loc_data)
+        # print("pos idx {}".format(pos_idx.shape))
         loc_p = loc_data[pos_idx].view(-1, 4)
         loc_t = loc_t[pos_idx].view(-1, 4)
-        loss_l = F.smooth_l1_loss(loc_p, loc_t, size_average=False)
+        loss_l = F.smooth_l1_loss(loc_p, loc_t, 
+            size_average=False)
+        if math.isinf(loss_l.data[0]) or math.isnan(loss_l.data[0]):
+            print("warining loss l inf or nan")
+            pdb.set_trace()
+            return loss_l, None
 
         # Compute max conf across batch for hard negative mining
         batch_conf = conf_data.view(-1, self.num_classes)
-        loss_c = log_sum_exp(batch_conf) - batch_conf.gather(1, conf_t.view(-1, 1))
+        # print(batch_conf)
+        # print("batch conf dim {} conf_t dim {}".format(
+        #     batch_conf.shape, conf_t.shape))
+        # print(log_sum_exp(batch_conf).shape)
+        # import pdb
+        # pdb.set_trace()
+        loss_c = log_sum_exp(batch_conf) - batch_conf.gather(
+            1, conf_t.view(-1, 1))
 
         # Hard Negative Mining
         loss_c[pos] = 0  # filter out pos boxes for now
@@ -99,11 +116,20 @@ class MultiBoxLoss(nn.Module):
         _, loss_idx = loss_c.sort(1, descending=True)
         _, idx_rank = loss_idx.sort(1)
         num_pos = pos.long().sum(1, keepdim=True)
-        num_neg = torch.clamp(self.negpos_ratio*num_pos, max=pos.size(1)-1)
+        # print("num_pos dim {}".format(num_pos.shape))
+        # print("inf {} lb {}".format(
+        #     self.negpos_ratio*num_pos,
+        #     pos.size(1)-1))
+        num_neg = torch.clamp(self.negpos_ratio*num_pos, 
+            max=pos.size(1)-1)
+        # print("num neg shape {}".format(num_neg.shape))
         neg = idx_rank < num_neg.expand_as(idx_rank)
 
         # Confidence Loss Including Positive and Negative Examples
+        # print("pos shape {} conf data {}".format(
+        #     pos.shape, conf_data.shape))
         pos_idx = pos.unsqueeze(2).expand_as(conf_data)
+        # print(pos_idx)
         neg_idx = neg.unsqueeze(2).expand_as(conf_data)
         conf_p = conf_data[(pos_idx+neg_idx).gt(0)].view(-1, self.num_classes)
         targets_weighted = conf_t[(pos+neg).gt(0)]
@@ -114,4 +140,7 @@ class MultiBoxLoss(nn.Module):
         N = num_pos.data.sum()
         loss_l /= N
         loss_c /= N
+        if math.isinf(loss_l.data[0]) or math.isnan(loss_l.data[0]):
+            print("warining loss l inf or nan")
+            # pdb.set_trace()
         return loss_l, loss_c

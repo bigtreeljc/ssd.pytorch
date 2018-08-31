@@ -162,6 +162,10 @@ class ConvertColor(object):
             image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         elif self.current == 'HSV' and self.transform == 'BGR':
             image = cv2.cvtColor(image, cv2.COLOR_HSV2BGR)
+        elif self.current == 'HSV' and self.transform == 'RGB':
+            image = cv2.cvtColor(image, cv2.COLOR_HSV2RGB)
+        elif self.current == 'BGR' and self.transform == 'RGB':
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         else:
             raise NotImplementedError
         return image, boxes, labels
@@ -318,7 +322,7 @@ class Expand(object):
             return image, boxes, labels
 
         height, width, depth = image.shape
-        ratio = random.uniform(1, 4)
+        ratio = random.uniform(1, 1.5)
         left = random.uniform(0, width*ratio - width)
         top = random.uniform(0, height*ratio - height)
 
@@ -333,6 +337,9 @@ class Expand(object):
         boxes = boxes.copy()
         boxes[:, :2] += (int(left), int(top))
         boxes[:, 2:] += (int(left), int(top))
+        # boxes[:, :2] += (int(top), int(left))
+        # boxes[:, 2:] += (int(top), int(left))
+
 
         return image, boxes, labels
 
@@ -414,4 +421,24 @@ class SSDAugmentation(object):
         ])
 
     def __call__(self, img, boxes, labels):
+        return self.augment(img, boxes, labels)
+
+class SSDWiderAugmentation(object):
+    def __init__(self, size=300, mean=(104, 117, 123)):
+        self.mean = mean
+        self.size = size
+        self.augment = Compose([
+            ConvertFromInts(),
+            # ToAbsoluteCoords(),
+            PhotometricDistort(),
+            Expand(self.mean),
+            RandomSampleCrop(),
+            RandomMirror(),
+            ToPercentCoords(),
+            Resize(self.size),
+            SubtractMeans(self.mean)
+        ])
+
+    def __call__(self, img, boxes, labels):
+        # print(boxes)
         return self.augment(img, boxes, labels)
